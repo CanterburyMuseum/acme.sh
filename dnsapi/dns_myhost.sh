@@ -31,56 +31,9 @@ dns_myhost_rm() {
 
 _myhost_totp() {
   _secret="$1"
-  # 1. Clean the secret and convert to uppercase
+  # Clean the secret and convert to uppercase
   _secret=$(echo "$_secret" | tr -d ' \n\r' | tr 'abcdefghijklmnopqrstuvwxyz' 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-
-  # 2. Pure POSIX Base32 to Hexadecimal conversion
-  _hex_secret=""
-  _b32_chars="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-  
-  # Process Base32 string character by character
-  _buffer=0
-  _bits_in_buffer=0
-  _rest="$_secret"
-  while [ -n "$_rest" ]; do
-    _char="${_rest%${_rest#?}}"
-    _rest="${_rest#?}"
-    [ "$_char" = "=" ] && break # Ignore padding
-    
-    # Find index of char in B32 alphabet
-    _prefix="${_b32_chars%%$_char*}"
-    _val=${#_prefix}
-    [ $_val -eq 32 ] && continue
-
-    _buffer=$(($_buffer << 5 | _val))
-    _bits_in_buffer=$(($_bits_in_buffer + 5))
-
-    while [ $_bits_in_buffer -ge 8 ]; do
-      _bits_in_buffer=$(($_bits_in_buffer - 8))
-      _byte=$(($_buffer >> _bits_in_buffer & 255))
-      _hex_byte=$(printf "%02x" $_byte)
-      _hex_secret="${_hex_secret}${_hex_byte}"
-      _buffer=$(($_buffer & $(( (1 << _bits_in_buffer) - 1 )) ))
-    done
-  done
-
-  # 3. Get current 30-second time step in Hex (padded to 16 chars / 8 bytes)
-  _time_step=$(($(date +%s) / 30))
-  _hex_time=$(printf "%016x" $_time_step)
-
-  # 4. Generate HMAC-SHA1 using OpenSSL (Output format: hex string)
-  _hmac=$(printf "%s" "$_hex_time" | _h2b | openssl dgst -sha1 -mac HMAC -macopt "hexkey:$_hex_secret" | sed 's/^.*= //')
-
-  # 5. Dynamic Truncation (Extract 4 bytes based on the last nibble offset)
-  _last_char="${_hmac#${_hmac%?}}"
-  _offset=$((0x$_last_char * 2))
-  _part_hex=$(printf "%s" "$_hmac" | cut -c $((_offset + 1))-$((_offset + 8)))
-  
-  # Mask the most significant bit to avoid signed integer issues
-  _num=$((0x$_part_hex & 0x7fffffff))
-
-  # 6. Generate 6-digit PIN
-  _pin=$(($_num % 1000000))
+  _pin="$(oathtool --base32 --totp "$_secret" 2>/dev/null)"
   printf "%06d" $_pin
 }
 
@@ -212,10 +165,10 @@ _myhost_get_domain_id() {
   _escaped_domain=$(echo "$_search_domain" | sed 's/\./\\./g')
 
   # Search for checkbox domids[] and domain name link
-  _dom_id=$(echo "$_flat_html" | sed -n 's/.*name="domids\[\]" class="domids stopEventBubble" value="\([0-9]*\)" \?\/>\s*<\/td>\s*<td[^>]*>\s*<a href="https\?:\/\/'"$_escaped_domain"'".*/\1/p')
+  _dom_id=$(echo "$_flat_html" | sed -n 's/.*name="domids\[\]" class="domids stopEventBubble" value="\([0-9]*\)"[^>]*\/>\s*<\/td>\s*<td[^>]*>\s*<a href="http:\/\/'"$_escaped_domain"'".*/\1/p')
 
   if [ -z "$_dom_id" ]; then
-    _dom_id=$(echo "$_flat_html" | sed -n 's/.*value="\([0-9]*\)"[^>]*>\s*<\/td>\s*<td[^>]*>\s*<a href="https\?:\/\/'"$_escaped_domain"'".*/\1/p')
+    _dom_id=$(echo "$_flat_html" | sed -n 's/.*value="\([0-9]*\)"[^>]*>\s*<\/td>\s*<td[^>]*>\s*<a href="http:\/\/'"$_escaped_domain"'".*/\1/p')
   fi
 
   echo "$_dom_id"
